@@ -1,37 +1,17 @@
 import socket
 import struct
-import matplotlib.pyplot as plt
-import matplotlib.animation as anima
+import csv
+import os
 
-HOST = '0.0.0.0'  # Accept connections from any interface
-PORT = 12345  # Match this with Arduino
+HOST = '0.0.0.0'
+PORT = 12345
+CSV_FILE = 'received_data.csv'
 
-# Initialize data holders
-objectX_data = []
-objectY_data = []
-carX_data = []
-carY_data = []
-
-# Initialize a plot
-fig, axs = plt.subplots()
-graphObject, = axs.plot([], [], color='g', label='Object')  # note the comma
-graphCar, = axs.plot([], [], color='b', label='Car')
-axs.set_xlim(-800, 800)
-axs.set_ylim(-800, 800)
-axs.set_xlabel('x')
-axs.set_ylabel('y')
-axs.set_title('Real-Time Robot Position')
-axs.legend()
-
-# Function to update the graph
-def update_plot(frame):
-    if objectX_data and objectY_data and carX_data and carY_data:
-        graphObject.set_data(objectX_data, objectY_data)
-        graphCar.set_data(carX_data, carY_data)
-    return graphObject, graphCar
-
-# Start the animation
-ani = anima.FuncAnimation(fig, update_plot, interval=200)
+# Create CSV file and write header if it doesn't exist
+if not os.path.exists(CSV_FILE):
+    with open(CSV_FILE, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['a', 'b', 'c', 'd'])  # column headers
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
@@ -42,34 +22,20 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     print(f"[SERVER] Connection from {addr}")
 
     with conn:
-        try:
-            plt.ion()
-            plt.show()
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
             
-            conn.settimeout(5.0)  # Set timeout to detect disconnects
-            while True:
-                try:
-                    data = conn.recv(16)
-                    if not data:
-                        print("[SERVER] No data received. Closing connection.")
-                        break
-                except socket.timeout:
-                    print("[SERVER] Connection timed out. Closing connection.")
-                    break
+            a, b, c, d = struct.unpack('<ffff', data[:16])  # Only unpack first 16 bytes
+            a, b, c, d = round(a, 5), round(b, 5), round(c, 5), round(d, 5)
 
+            print(f"Received a: {a}")
+            print(f"Received b: {b}")
+            print(f"Received c: {c}")
+            print(f"Received d: {d}")
 
-                a, b, c, d = struct.unpack('<ffff', data)
-
-                objectX_data.append(round(a, 5))
-                objectY_data.append(round(b, 5))
-                carX_data.append(round(c, 5))
-                carY_data.append(round(d, 5))
-
-                conn.sendall(b"Hello from Python server!\n")
-                plt.pause(0.01)
-
-        # Save video after disconnect
-        finally:
-            ani.save("robot_position.mp4", writer="ffmpeg", fps=5)
-            print("[SERVER] Animation saved to robot_position.mp4")
-            plt.close(fig)
+            # Append to CSV file
+            with open(CSV_FILE, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow([a, b, c, d])
