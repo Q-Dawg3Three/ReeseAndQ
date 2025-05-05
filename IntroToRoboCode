@@ -7,30 +7,32 @@ HOST = '0.0.0.0'  # Accept connections from any interface
 PORT = 12345  # Match this with Arduino
 
 # Initialize data holders
-x_data = []
-y_data = []
+objectX_data = []
+objectY_data = []
+carX_data = []
+carY_data = []
 
 # Initialize a plot
 fig, axs = plt.subplots()
-graph = axs.plot([], [], color='g')
-axs.set_xlim(-10, 10)  # adjust these limits to match expected data
-axs.set_ylim(-10, 10)
+graphObject, = axs.plot([], [], color='g', label='Object')  # note the comma
+graphCar, = axs.plot([], [], color='b', label='Car')
+axs.set_xlim(-800, 800)
+axs.set_ylim(-800, 800)
 axs.set_xlabel('x')
 axs.set_ylabel('y')
 axs.set_title('Real-Time Robot Position')
+axs.legend()
 
-
-# Create a function that updates the graph
+# Function to update the graph
 def update_plot(frame):
-    if x_data and y_data:
-        graph.set_offsets(list(zip(x_data, y_data)))
-    return graph,
+    if objectX_data and objectY_data and carX_data and carY_data:
+        graphObject.set_data(objectX_data, objectY_data)
+        graphCar.set_data(carX_data, carY_data)
+    return graphObject, graphCar
 
-
-# Starting the animation for the graph
+# Start the animation
 ani = anima.FuncAnimation(fig, update_plot, interval=200)
 
-# Update the plot in real-time
 plt.ion()
 plt.show()
 
@@ -44,20 +46,21 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
     with conn:
         while True:
-            data = conn.recv(1024)
+            data = conn.recv(16)  # 4 floats = 16 bytes
             if not data:
                 break
-            a, b = struct.unpack('<ff', data)  # Little-endian float
 
-            x_data.append(round(a, 5))
-            y_data.append(round(b, 5))
+            a, b, c, d = struct.unpack('<ffff', data)
+
+            objectX_data.append(round(a, 5))
+            objectY_data.append(round(b, 5))
+            carX_data.append(round(c, 5))
+            carY_data.append(round(d, 5))
 
             conn.sendall(b"Hello from Python server!\n")
-
             plt.pause(0.01)
 
-        # Save video after robot is disconnected
-        finally:
-            ani.save("robot_position.mp4", writer="ffmpeg", fps=5)
-            print("[SERVER] Animation saved to robot_position.mp4")
-            plt.close(fig)
+# Save video after disconnect
+ani.save("robot_position.mp4", writer="ffmpeg", fps=5)
+print("[SERVER] Animation saved to robot_position.mp4")
+plt.close(fig)
