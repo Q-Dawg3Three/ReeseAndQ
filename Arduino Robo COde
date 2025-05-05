@@ -1,0 +1,581 @@
+// Can choose to use L298N.h or your own motor functions from lab 2
+// L298N.h and Encoder.h will need to be installed
+#include <L298N.h>
+#include <Encoder.h>
+// controller.h is local and will need to be modified.
+#include "controller.h"
+#include "velocityProfile.h"
+#include <HCSR04.h>
+#include <Servo.h>
+
+// Car constants
+float D = 8;
+const int buttonPin = 12;
+float b = 20;
+
+// Motor control and encoder variables
+// Need one per motor
+// Encoders need at least one interrupt pin
+// MEGA interrupt pins are:
+// 2, 3, 18, 19, 20, 21
+L298N motor1(3, 23, 22); // Back Right
+L298N motor2(4, 25, 24); // Back Left
+L298N motor3(5, 27, 26); // Front Right
+L298N motor4(6, 29, 28); // Front Left
+Encoder enc1(16, 11);
+Encoder enc2(17, 10);
+Encoder enc3(20, 9);
+Encoder enc4(21, 8);
+
+unsigned long startTime;
+bool started = 0;
+
+// Initializing functions from below in memory
+void reset();
+void updatePos(float e1, float e2, float e3, float e4);
+void goToSetPoint (float globalXd, float globalYd);
+void search();
+
+// Define Heading Variables
+  float XR;
+  float XL;
+  float theta;
+  float thetad;
+  float omega;
+  
+  float Kptheta = 2.5;
+  
+  float deltatheta = 0;
+  float prevenc1 = 0;
+  float prevenc2 = 0;
+  float prevenc3 = 0;
+  float prevenc4 = 0;
+
+  float d = 0;
+  float Xpos = 0;
+  float Ypos = 0;
+  float deltaX;
+  float deltaY;
+  float VR;
+  float VL;
+  float vsteady = 0;
+  
+  // Max velocities in counts for each side
+  float vRtop = (1484 + 1403)*0.5;
+  float vLtop = (1509 + 1543)*0.5;
+
+  float countspercm = 900/ (3.14 * D);
+  unsigned long startTime2 = 0;
+
+  long duration;
+  long distance;
+  HCSR04 hc(35, 34);
+  Servo myservo;
+  
+  float PobjX;
+  float PobjY;
+  const float l = 9.0*countspercm;
+  int objAng;
+  unsigned long startTime3 = 0;
+  
+  bool objFound = 0;
+
+    // Object location in counts
+  struct Location {
+    float x;
+    float y;
+  };
+
+  Location objLoc;
+  bool arrived = 0;
+
+  float encoder1;
+  float encoder2;
+  float encoder3;
+  float encoder4;
+  
+  float objDist;
+
+  bool ended = 0;
+
+#include <WiFiEsp.h>
+#include <WiFiEspClient.h>
+#include <WiFiEspServer.h>
+#include <WiFiEspUdp.h>
+
+char ssid[] = "QsiPhone";    
+char pass[] = "Qjl339981!";
+char server[] = "172.20.10.11";       // Your PC's local IP address
+
+int port = 12345;                     // Same port as in Python
+
+WiFiEspClient client;
+
+int status = WL_IDLE_STATUS;
+
+// Location in cms
+struct Location2 {
+  float Objx = 0.0;
+  float Objy = 0.0;
+  float Carx = 0.0;
+  float Cary = 0.0;
+};
+Location2 cmLocation;
+
+void printWifiStatus() {
+  // print the SSID of the network you're attached to
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi shield's IP address
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print where to go in the browser
+  Serial.println();
+  Serial.print("To see this page in action, open a browser to http://");
+  Serial.println(ip);
+  Serial.println();
+}
+
+void setup() {
+  Serial.begin(9600);
+    Serial1.begin(115200);
+    Serial1.write("AT+UART_DEF=9600,8,1,0,0\r\n");
+  delay(200);
+  Serial1.write("AT+RST\r\n");
+  delay(200);
+  Serial1.begin(9600);    // initialize serial for ESP module
+  WiFi.init(&Serial1);    // initialize ESP module
+
+  // check for the presence of the shield
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println("WiFi shield not present");
+    // don't continue
+    while (true);
+  }
+
+  // attempt to connect to WiFi network
+  while (status != WL_CONNECTED) {
+    Serial.print("Attempting to connect to WPA SSID: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network
+    status = WiFi.begin(ssid, pass);
+  }
+
+  Serial.println("You're connected to the network");
+  printWifiStatus();
+  
+  Serial.print("Listening on port ");
+  Serial.println(port);
+
+  pinMode(buttonPin, INPUT_PULLUP);
+  myservo.attach(13);
+  myservo.write(60);
+
+}
+
+// Initialize bool to initate wifi connection
+bool connected = 0;
+
+void loop() {
+  while (!connected) {
+        if (client.connected()) {
+          connected = 1;
+        }
+        else {
+          connected = 0;
+          Serial.println("Disconnected from server. Attempting reconnect...");
+          client.stop();
+          delay(1000);
+          if (client.connect(server, port)) {
+            Serial.println("Reconnected.");
+          }
+        }
+      }
+  connected = 0;
+
+  // Wait for button press to start
+  if (!started && digitalRead(buttonPin) == LOW) {
+    delay(500);
+    started = 1;
+  }
+  if (started) {
+
+    // Repeat follow sequence forever
+      while (!ended) {
+        // Clear object found Boolean
+        objFound = 0;
+
+        // Search for object until found
+        search();
+        
+        delay(250);
+        
+        while (!connected) {
+          if (client.connected()) {
+            // Send object coordinates to Computer
+            cmLocation.Objx = objLoc.x/countspercm;
+            cmLocation.Objy = objLoc.y/countspercm;
+            client.write((uint8_t*)&cmLocation, sizeof(Location2));
+            connected = 1;
+          }
+          else {
+            connected = 0;
+            Serial.println("Disconnected from server. Attempting reconnect...");
+            client.stop();
+            delay(1000);
+            if (client.connect(server, port)) {
+              Serial.println("Reconnected.");
+            }
+          }
+        }
+        connected = 0;
+          
+        // Once objcet is found, go towards object's centimeter location
+        goToSetPoint(objLoc.x/countspercm,objLoc.y/countspercm);
+      }
+    started = 0;
+    
+  }
+}
+
+// Function to get current position in global frame from encoders
+void updatePos(float e1, float e2, float e3, float e4) {
+  
+  // Update Heading Measure Variables
+    XR = (e1 - prevenc1 + e3 - prevenc3)*0.5;
+    XL = (e2 - prevenc2 + e4 - prevenc4)*0.5;
+
+    //Serial.print(e1);Serial.print(", ");Serial.print(e2);Serial.print(", ");Serial.print(e3);Serial.print(", ");Serial.println(e4);
+    // How far car moved (linearly, but not necessarily straight line)
+    d = (XR + XL)*0.5;
+
+    // How much heading changed
+    deltatheta = (XR-XL)/(b*countspercm);
+    
+    // 0 Reference Frame Car Heading/Orientation
+    // Update current heading
+    theta = theta + deltatheta;
+    //Serial.print("Theta: ");Serial.println(theta);
+    
+    // 0 Reference Frame X Position
+    Xpos = Xpos + d*cos(theta);
+    // 0 Reference Frame Y Position
+    Ypos = Ypos + d*sin(theta);
+    Serial.print("Position: ");Serial.print(Xpos/countspercm);Serial.print(", ");Serial.println(Ypos/countspercm);
+
+    prevenc1 = e1;
+    prevenc2 = e2;
+    prevenc3 = e3;
+    prevenc4 = e4;
+    
+}
+
+void updateTheta(float e1, float e2, float e3, float e4) {
+  // Update Heading Measure Variables
+    XR = (e1 - prevenc1 + e3 - prevenc3)*0.5;
+    XL = (e2 - prevenc2 + e4 - prevenc4)*0.5;
+
+    //Serial.print(e1);Serial.print(", ");Serial.print(e2);Serial.print(", ");Serial.print(e3);Serial.print(", ");Serial.println(e4);
+
+    // How much heading changed
+    deltatheta = (XR-XL)/(b*countspercm);
+
+    // Update current heading
+    theta = theta + deltatheta;
+    //Serial.print("Theta: ");Serial.println(theta);
+
+    // Set ecoder values back to what they were before turn
+    enc1.write(prevenc1);
+    enc2.write(prevenc2);
+    enc3.write(prevenc3);
+    enc4.write(prevenc4);
+
+}
+
+
+// Function to make robot travel to robot position
+void goToSetPoint (float globalXd, float globalYd) {
+
+  //Serial.print("Driving Towards: ");Serial.print(PobjX/countspercm); Serial.print(" , ");Serial.println(PobjY/countspercm);
+  
+  // Initialize times for measuring
+  startTime = millis();
+  startTime2 = millis();
+  
+  // How many counts do you want to go?
+  float XdCounts = countspercm * globalXd;
+  float YdCounts = countspercm * globalYd;
+  
+  // Set constant velocity
+  float vsteady = 750;
+
+  // Update position for current data use
+  updatePos(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read());
+
+  // Find distance from current pos to goal pos
+  deltaX = XdCounts - Xpos;
+  deltaY = YdCounts - Ypos;
+  Serial.print("Distance to Goal: ");Serial.print(deltaX/countspercm); Serial.print(" , ");Serial.println(deltaY/countspercm);
+
+  unsigned long startTime = millis();
+
+  // Loop while further than 75 counts from destination counts
+  while ((abs(deltaX) > 100 || abs(deltaY) > 100)) {
+    // Only update every 150 ms
+    if (millis() - startTime < 150) {
+      continue;
+    }
+    else {
+      startTime = millis();
+    }
+
+    // Only drive toward for 3 seconds
+    if (millis() - startTime2 < 2000) {
+    }
+    else {
+      startTime2 = millis(); 
+      break;
+    }
+  
+    //Serial.print("D2G: ");Serial.print(deltaX);Serial.print(", ");Serial.println(deltaY);
+    Serial.println(" ");
+    // Update current Position
+    updatePos(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read());
+    
+    // Update distance to goal
+    deltaX = XdCounts - Xpos;
+    deltaY = YdCounts - Ypos;
+        
+    // Determine heading adjustment
+    thetad = atan2(deltaY,deltaX);
+    //Serial.print("thetad: ");Serial.println(thetad);
+    
+    omega = Kptheta * (thetad - theta);
+    //Serial.print("Omega: ");Serial.print(omega);Serial.print(", Theta Desired: ");Serial.print(thetad);Serial.print(", Theta: ");Serial.println(theta);
+
+    // Calculate velocity for each side based on heading desired
+    VR = vsteady + b*omega*0.5*countspercm;
+    VL = vsteady - b*omega*0.5*countspercm;
+
+    //Serial.print("Velocity [cm/s]: ");Serial.print(VR/countspercm);Serial.print(", ");Serial.println(VL/countspercm);
+
+    //Serial.print(constrain (255 * VR / (vRtop), 0, 255));Serial.print(", ");Serial.println(constrain (255 * VL / (vLtop), 0, 255));
+    // Send speed to motor proporitonally with PWM
+    motor1.setSpeed(constrain (255 * VR / (vRtop), 85, 255));
+    motor2.setSpeed(constrain (255 * VL / (vLtop), 85, 255));
+    motor3.setSpeed(constrain (255 * VR / (vRtop), 85, 255));
+    motor4.setSpeed(constrain (250 * VL / (vLtop), 85, 255));
+
+    // Set motors to go
+    
+    motor1.forward();
+    motor2.forward();
+    motor3.forward();
+    motor4.forward();
+         
+  }
+
+  // Arrived close enough to destination, stop motors
+  Serial.println("Stopping goToSetPoint");
+  motor1.stop();
+  motor2.stop();
+  motor3.stop();
+  motor4.stop();
+  //reset();
+  updatePos(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read()); 
+  startTime = millis();
+  startTime2 = millis();
+
+  while (!connected) {
+    if (client.connected()) {
+      // Send car position to Computer
+      cmLocation.Carx = Xpos/countspercm;
+      cmLocation.Cary = Ypos/countspercm;
+      client.write((uint8_t*)&cmLocation, sizeof(Location2));
+      connected = 1;
+    }
+    else {
+      connected = 0;
+      Serial.println("Disconnected from server. Attempting reconnect...");
+      client.stop();
+      delay(1000);
+      if (client.connect(server, port)) {
+        Serial.println("Reconnected.");
+      }
+    }
+  }
+  connected = 0;
+  
+  
+}
+
+void reset() {
+  // Useful reset function
+  // Reset encoders 
+  enc1.write(0);
+  enc2.write(0);
+  enc3.write(0);
+  enc4.write(0);
+}
+
+void search() {
+    objFound = 0;
+    
+    startTime3 = millis();
+
+    // Update position for current data use
+    updatePos(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read());
+    
+    // Loop while object isnt found
+    while (!objFound) {
+      
+      //Serial.println("Encoder readings before object search:");
+      //Serial.print("Enc1: ");Serial.print(-1*enc1.read());Serial.print(", Enc2: ");Serial.print(enc2.read());Serial.print(", Enc3: ");Serial.print(-1*enc3.read());Serial.print(", Enc4: ");Serial.print(enc4.read());Serial.println(".");
+    
+      Serial.println("SEARCHING");
+      
+      // Scan for Obstacle
+      for (int pos = 30; pos <= 150; pos += 60) { // goes from 30 to 150 degrees. 120° sweep
+        // Move servo to angle
+        myservo.write(pos); // tell servo to go to position in variable 'pos'
+        delay(60);// waits 60ms for the servo to reach the position
+
+        objDist = hc.dist();
+        
+        // Check for obstacles
+        startTime3 = millis();
+        
+        
+        // If object detected, stop and print obstacle location
+        if (objDist <= 50 && objDist >= 10) {
+ 
+          //Serial.println(hc.dist());
+          delay(250);
+
+          // Check Twice for object
+          objDist = hc.dist();
+          if (objDist <= 50 && objDist >= 10) {
+            objFound = 1;
+            objAng = (pos - 90)*3.14152/180;
+            break;
+          }
+          else {
+          }
+          //Serial.print("X: ");Serial.print(PobsX/countspercm);Serial.print(", Y: ");Serial.print(PobsY/countspercm);Serial.println(".");
+          
+          // Prepare angle to be used in obstacle avoidance
+          
+        }
+        // Allow time for sensor reading
+        while (millis() - startTime3 < 300) {
+        }
+        
+      }
+      myservo.write(60);
+    
+
+    arrived = 0;
+
+    // Update current Theta
+    updateTheta(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read());
+
+    // PREPARE to turn car 
+    //Adjust theta desired to reach desired heading
+    thetad = theta - 2*3.14153/3;
+    //Serial.print("thetad: ");Serial.println(thetad);
+
+    // Rotate Robot 120° clockwise/to the right
+    Serial.println("TURNING 120°");
+
+    
+    while(!arrived && !objFound) {
+      
+      // Update current Theta
+      updateTheta(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read());
+
+      omega = Kptheta * (thetad - theta);
+      //Serial.print("Omega: ");Serial.print(omega);Serial.print(", Theta Desired: ");Serial.print(thetad);Serial.print(", Theta: ");Serial.println(theta);
+
+      vsteady = 750;
+        
+      // Calculate velocity for each side based on heading desired
+      VR = vsteady + b*omega*0.5*countspercm;
+      VL = vsteady - b*omega*0.5*countspercm;
+      VL = VR;
+      //Serial.print("Velocity [cm/s]: ");Serial.print(VR/countspercm);Serial.print(", ");Serial.println(VL/countspercm);
+         
+      // Send speed to motor proporitonally with PWM
+      motor1.setSpeed(constrain (255 * VR / (vRtop), 100, 255));
+      motor2.setSpeed(constrain (255 * VL / (vLtop), 100, 255));
+      motor3.setSpeed(constrain (255 * VR / (vRtop), 100, 255));
+      motor4.setSpeed(constrain (250 * VL / (vLtop), 100, 255));
+      //Serial.print(constrain (255 * VR / (vRtop), 0, 255));Serial.print(", ");Serial.println(constrain (255 * VL / (vLtop), 0, 255));
+    
+      // Set motors to go
+      
+      motor1.backward();
+      motor2.forward();
+      motor3.backward();
+      motor4.forward();
+      
+
+      //Serial.print("ERROR: ");Serial.println(abs(thetad) - abs(theta));
+
+      // Check if arrived. *Turning right so "> -0.15"
+      if (thetad - theta > -0.15) {
+        Serial.println("Arrived");
+        Serial.println(" ");
+        arrived = 1;
+      }      
+    }
+    
+    // Arrived close enough to destination, stop motors
+    motor1.stop();
+    motor2.stop();
+    motor3.stop();
+    motor4.stop();
+
+    delay(500);
+    
+    // Update current Theta
+    updateTheta(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read()); 
+    
+    //Serial.println("Encoder readings after object search:");
+    //Serial.print("Enc1: ");Serial.print(-1*enc1.read());Serial.print(", Enc2: ");Serial.print(enc2.read());Serial.print(", Enc3: ");Serial.print(-1*enc3.read());Serial.print(", Enc4: ");Serial.print(enc4.read());Serial.println(".");
+
+    }
+
+    // Reset thetad for redundancy hopefully
+    thetad = 0;
+    
+    // Reset servo
+    myservo.write(60);
+
+    // Normalize Theta to within +- 2*PI
+    while (theta > 3.14153*2) {
+      theta = theta - 3.14153*2;
+    }
+    while (theta < -3.14153*2) {
+      theta = theta + 3.14153*2;
+    }
+
+    // Update current Theta
+    updateTheta(-1*enc1.read(), enc2.read(), -1*enc3.read(), enc4.read());
+  
+    // Obstacle Location Announcement:
+    Serial.println("OBSTACLE DETECTED: "); 
+    Serial.print("Distance away: ");Serial.println(objDist);
+    
+    // Object location in global frame calculation, in counts!
+    PobjX = objDist*countspercm*(cos(theta)*cos(objAng) - sin(theta)*sin(objAng)) + l*cos(theta) + Xpos;
+    PobjY = objDist*countspercm*(sin(theta)*cos(objAng) - cos(theta)*sin(objAng)) + l*sin(theta) + Ypos;
+
+    objLoc.x = PobjX;
+    objLoc.y = PobjY;
+
+    Serial.print(PobjX/countspercm); Serial.print(" cm in X, ");Serial.print(PobjY/countspercm); Serial.println(" cm in Y.");
+
+}
