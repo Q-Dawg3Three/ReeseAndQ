@@ -33,9 +33,6 @@ def update_plot(frame):
 # Start the animation
 ani = anima.FuncAnimation(fig, update_plot, interval=200)
 
-plt.ion()
-plt.show()
-
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
     s.listen()
@@ -45,22 +42,27 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     print(f"[SERVER] Connection from {addr}")
 
     with conn:
-        while True:
-            data = conn.recv(16)  # 4 floats = 16 bytes
-            if not data:
-                break
+        tyr:
+            plt.ion()
+            plt.show()
+            
+            while True:
+                data = conn.recv(16)  # 4 floats = 16 bytes
+                if not data:
+                    break
 
-            a, b, c, d = struct.unpack('<ffff', data)
+                a, b, c, d = struct.unpack('<ffff', data)
 
-            objectX_data.append(round(a, 5))
-            objectY_data.append(round(b, 5))
-            carX_data.append(round(c, 5))
-            carY_data.append(round(d, 5))
+                objectX_data.append(round(a, 5))
+                objectY_data.append(round(b, 5))
+                carX_data.append(round(c, 5))
+                carY_data.append(round(d, 5))
 
-            conn.sendall(b"Hello from Python server!\n")
-            plt.pause(0.01)
+                conn.sendall(b"Hello from Python server!\n")
+                plt.pause(0.01)
 
-# Save video after disconnect
-ani.save("robot_position.mp4", writer="ffmpeg", fps=5)
-print("[SERVER] Animation saved to robot_position.mp4")
-plt.close(fig)
+        # Save video after disconnect
+        finally:
+            ani.save("robot_position.mp4", writer="ffmpeg", fps=5)
+            print("[SERVER] Animation saved to robot_position.mp4")
+            plt.close(fig)
