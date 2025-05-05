@@ -1,1 +1,63 @@
+import socket
+import struct
+import matplotlib.pyplot as plt
+import matplotlib.animation as anima
 
+HOST = '0.0.0.0'  # Accept connections from any interface
+PORT = 12345  # Match this with Arduino
+
+# Initialize data holders
+x_data = []
+y_data = []
+
+# Initialize a plot
+fig, axs = plt.subplots()
+graph = axs.plot([], [], color='g')
+axs.set_xlim(-10, 10)  # adjust these limits to match expected data
+axs.set_ylim(-10, 10)
+axs.set_xlabel('x')
+axs.set_ylabel('y')
+axs.set_title('Real-Time Robot Position')
+
+
+# Create a function that updates the graph
+def update_plot(frame):
+    if x_data and y_data:
+        graph.set_offsets(list(zip(x_data, y_data)))
+    return graph,
+
+
+# Starting the animation for the graph
+ani = anima.FuncAnimation(fig, update_plot, interval=200)
+
+# Update the plot in real-time
+plt.ion()
+plt.show()
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind((HOST, PORT))
+    s.listen()
+    print(f"[SERVER] Listening on port {PORT}...")
+
+    conn, addr = s.accept()
+    print(f"[SERVER] Connection from {addr}")
+
+    with conn:
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+            a, b = struct.unpack('<ff', data)  # Little-endian float
+
+            x_data.append(round(a, 5))
+            y_data.append(round(b, 5))
+
+            conn.sendall(b"Hello from Python server!\n")
+
+            plt.pause(0.01)
+
+        # Save video after robot is disconnected
+        finally:
+            ani.save("robot_position.mp4", writer="ffmpeg", fps=5)
+            print("[SERVER] Animation saved to robot_position.mp4")
+            plt.close(fig)
