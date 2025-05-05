@@ -46,10 +46,17 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             plt.ion()
             plt.show()
             
+            conn.settimeout(5.0)  # Set timeout to detect disconnects
             while True:
-                data = conn.recv(16)  # 4 floats = 16 bytes
-                if not data:
+                try:
+                    data = conn.recv(16)
+                    if not data:
+                        print("[SERVER] No data received. Closing connection.")
+                        break
+                except socket.timeout:
+                    print("[SERVER] Connection timed out. Closing connection.")
                     break
+
 
                 a, b, c, d = struct.unpack('<ffff', data)
 
