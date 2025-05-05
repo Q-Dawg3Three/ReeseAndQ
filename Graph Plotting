@@ -1,1 +1,12 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set()
 
+df = pd.read_csv('received_data.csv')
+plt.plot(df['a'], df['b'], label=('Object'))
+plt.plot(df['c'], df['d'], label=('Car'))
+plt.legend()
+plt.title('Robot and Object Position in Space', fontsize=16)
+plt.xlabel('x position', fontsize=12)
+plt.ylabel('y posttion', fontsize=12);
